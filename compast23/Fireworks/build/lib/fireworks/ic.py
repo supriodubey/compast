@@ -112,9 +112,9 @@ class ic_tf:
         """
         if seed is not None:
             tf.random.set_seed(seed)
-        pos = tf.random.uniform(shape=(N, 3), minval=min_pos, maxval=max_pos, dtype=tf.float64)
-        vel = tf.random.uniform(shape=(N, 3), minval=min_vel, maxval=max_vel, dtype=tf.float64)
-        mass = tf.random.uniform(shape=(N,), minval=min_mass, maxval=max_mass, dtype=tf.float64)
+        pos = tf.random.uniform(shape=(N, 3), minval=min_pos, maxval=max_pos, dtype=tf.float32)
+        vel = tf.random.uniform(shape=(N, 3), minval=min_vel, maxval=max_vel, dtype=tf.float32)
+        mass = tf.random.uniform(shape=(N,), minval=min_mass, maxval=max_mass, dtype=tf.float32)
         return Particles_tf(position=pos, velocity=vel, mass=mass)
     
     def ic_random_normal(N: int, mass: float=1, seed: int=None) -> Particles_tf:
@@ -129,9 +129,9 @@ class ic_tf:
         """
         if seed is not None:
             tf.random.set_seed(seed)
-        pos = tf.random.normal(shape=(N, 3), dtype=tf.float64)
-        vel = tf.random.normal(shape=(N, 3), dtype=tf.float64)
-        mass = tf.ones(shape=(N,), dtype=tf.float64) * mass
+        pos = tf.random.normal(shape=(N, 3), dtype=tf.float32)
+        vel = tf.random.normal(shape=(N, 3), dtype=tf.float32)
+        mass = tf.ones(shape=(N,), dtype=tf.float32) * mass
         return Particles_tf(position=pos, velocity=vel, mass=mass)
     
     def ic_two_body(mass1: float, mass2: float, rp: float, e: float) -> Particles_tf:
@@ -159,9 +159,9 @@ class ic_tf:
         v2 = mass1 / Mtot * vrel
         v1_np = v1.numpy()
         v2_np = v2.numpy()
-        pos = tf.constant([[0., 0., 0.], [rp, 0., 0.]], dtype=tf.float64)
-        vel = tf.constant([[0., v1_np, 0.], [0., v2_np, 0.]], dtype=tf.float64)
-        mass = tf.constant([mass1, mass2], dtype=tf.float64)
+        pos = tf.constant([[0., 0., 0.], [rp, 0., 0.]], dtype=tf.float32)
+        vel = tf.constant([[0., v1_np, 0.], [0., v2_np, 0.]], dtype=tf.float32)
+        mass = tf.constant([mass1, mass2], dtype=tf.float32)
         return Particles_tf(position=pos, velocity=vel, mass=mass)
 
 

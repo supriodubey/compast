@@ -36,7 +36,7 @@ Then, all the functions need to return the a tuple with 5 elements:
         to be a Nx1 numpy array.
 
 """
-from typing import Optional, Tuple, Callable, Union, List
+from typing import Optional, Tuple, Callable, Union, List, Any
 import numpy as np
 import numpy.typing as npt
 from ..particles import Particles,Particles_tf
@@ -407,102 +407,85 @@ def integrator_tsunami(particles: Particles,
 
 
 def runge_kutta_4_integrator_tf(particles: Particles_tf,
-                             tstep: float,
-                             acceleration_estimator: Union[Callable, List],
-                             softening: float = 0.,
-                             external_accelerations: Optional[List] = None):
+                                tstep: float,
+                                acceleration_estimator: Callable,
+                                softening: float = 0.,
+                                external_accelerations: Optional[List] = None,
+                                potential: bool = False) \
+        -> Tuple[Particles_tf, float, Optional[tf.Tensor], Optional[tf.Tensor], Optional[tf.Tensor]]:
     """
-    This is an example of the Runge Kutta 4th order  integrator.
-    :param particles: Instance of the class :class:`~fireworks.particles.Particles`
-    :param tstep: Times-step for current integration (notice some methods can use smaller sub-time step to
-    achieve the final result
-    :param acceleration_estimator: It needs to be a function from the module (:mod:`fireworks.nbodylib.dynamics`)
-    following the input/output style of the template function  (:func:`fireworks.nbodylib.dynamics.acceleration_estimate_template`).
-    :param softening: softening parameter for the acceleration estimate, can use 0 as default value
-    :param external_accelerations: a list of additional force estimators (e.g. an external potential field) to
-    consider to estimate the final acceleration (and if available jerk) on the particles
+    This is an example of the Runge Kutta 4th order integrator using TensorFlow operations.
+    
+    :param particles: Instance of the class Particles_tf
+    :param tstep: Time-step for the current integration
+    :param acceleration_estimator: Function to estimate acceleration, following the input/output style
+                                    of the acceleration function.
+    :param softening: Softening parameter for the acceleration estimate, default is 0.
+    :param external_accelerations: Additional force estimators to consider for estimating the final acceleration
+    :param potential: Whether to compute and return the potential
     :return: A tuple with 5 elements:
-
-        - The updated particles instance
-        - tstep, the effective timestep evolved in the simulation (for some integrator this can be
-            different wrt the input tstep)
-        - acc, Nx3 numpy array storing the final acceleration for each particle, ca be set to None
-        - jerk, Nx3 numpy array storing the time derivative of the acceleration, can be set to None
-        - pot, Nx1 numpy array storing the potential at each particle position, can be set to None
-
+                - The updated particles instance
+                - The effective timestep evolved in the simulation
+                - The final acceleration for each particle (can be None)
+                - The time derivative of the acceleration (can be None)
+                - The potential at each particle position (can be None)
     """
 
-    # Helper function to compute the derivative at a given state
-    def compute_derivative(state, t, acceleration_function):
+    def compute_derivative_tf(state, t, acceleration_function):
         """
-        Takes three arguments
-        state : current state of the particles
-        t : time step
-        acceleration_function : the accleration function being used from the module (:mod: 'fireworks.nbodylib.dynamics').
-
-        Returns:
-        the velocity
-        acceleration 
+        Compute the derivative at a given state using TensorFlow operations.
+        
+        :param state: Current state of the particles
+        :param t: Time step
+        :param acceleration_function: The acceleration function being used
+        :return: The velocity, acceleration, and potential
         """
-        #pos, vel = state.pos, state.vel
-        acc, jerk, potential = acceleration_function(state, softening,potential)
-        return state.vel, acc
+        acc, _, pot = acceleration_function(state, softening=softening, potential=potential)
+        return state.vel, acc, pot
 
+    # Initialize variables
+    acc, jerk, pot = acceleration_estimator(particles, softening=softening, potential=potential)
+    # print(f"potential inside compute derivative {pot}\n")
+    
     # Check additional accelerations
     if external_accelerations is not None:
         for ext_acc_estimator in external_accelerations:
-            acct, jerkt, potentialt = ext_acc_estimator(particles, softening, potential)
+            acct, jerkt, potentialt = ext_acc_estimator(particles, softening)
             acc += acct
             if jerk is not None and jerkt is not None: jerk += jerkt
             if potential is not None and potentialt is not None: potential += potentialt
 
     # RK4 integration
     current_state = particles.copy()
-    #print("previous state:\n",current_state.pos[0],current_state.vel[0],current_state.mass[0])
+    # print("previous state:\n",current_state.pos[0],current_state.vel[0],current_state.mass[0])
     
-    ################### k1v,k1a ###########################
-
-    k1v, k1a = compute_derivative(current_state, 0, acceleration_estimator)
-    #print("k1:\n",k1v,k1a)
+    
+            
+    k1v, k1a, _ = compute_derivative_tf(current_state, 0, acceleration_estimator)
     new_state1_pos = current_state.pos + 0.5 * tstep * k1v
     new_state1_vel = current_state.vel + 0.5 * tstep * k1a
-    new_state1 = Particles_tf(new_state1_pos,new_state1_vel,current_state.mass)
-    #print("new_state1:\n",new_state1.pos[0],new_state1.vel[0],new_state1.mass[0])
-   
-   ################### k2v,k2a ###########################
+    new_state1 = Particles_tf(new_state1_pos, new_state1_vel, current_state.mass)
 
-    k2v, k2a = compute_derivative(new_state1, tstep / 2, acceleration_estimator)
-    #print("k2:\n",k2v,k2a)
+    k2v, k2a, _ = compute_derivative_tf(new_state1, tstep / 2, acceleration_estimator)
     new_state2_pos = current_state.pos + 0.5 * tstep * k2v
     new_state2_vel = current_state.vel + 0.5 * tstep * k2a
-    new_state2 = Particles_tf(new_state2_pos,new_state2_vel,current_state.mass)
-    #print("new_state2:\n",new_state2.pos[0],new_state2.vel[0],new_state2.mass[0])
-    
+    new_state2 = Particles_tf(new_state2_pos, new_state2_vel, current_state.mass)
 
-    ################### k3v,k3a ###########################
+    k3v, k3a, _ = compute_derivative_tf(new_state2, tstep / 2, acceleration_estimator)
+    new_state3_pos = current_state.pos + tstep * k3v
+    new_state3_vel = current_state.vel + tstep * k3a
+    new_state3 = Particles_tf(new_state3_pos, new_state3_vel, current_state.mass)
 
-    k3v, k3a = compute_derivative(new_state2, tstep / 2, acceleration_estimator)
-    #print("k3:\n",k3v,k3a)
-    new_state3_pos = current_state.pos +  tstep * k3v
-    new_state3_vel = current_state.vel +  tstep * k3a
-    new_state3 = Particles_tf(new_state3_pos,new_state3_vel,current_state.mass)
-    #print("new_state3:\n",new_state3.pos[0],new_state3.vel[0],new_state3.mass[0])
+    k4v, k4a, _ = compute_derivative_tf(new_state3, tstep, acceleration_estimator)
 
-    ################### k4v,k4a ###########################
-
-    k4v, k4a = compute_derivative(new_state3, tstep, acceleration_estimator)
-
-
-
+    # Update particle positions and velocities
     particles.pos = current_state.pos + (tstep / 6) * (k1v + 2 * k2v + 2 * k3v + k4v)
     particles.vel = current_state.vel + (tstep / 6) * (k1a + 2 * k2a + 2 * k3a + k4a)
-
-    acc_new,jerk_new,potential_new = acceleration_estimator(particles, softening,potential)  # Update acceleration at new position
+    # print(f"new state of the particle is pos: {particles.pos} and vel: {particles.vel} \n")
+    # print(f"******{particles.Epot_tf(softening =softening)}******")
+    # Update acceleration at new position
+    acc_new, _, pot_new = acceleration_estimator(particles, softening=softening, potential=potential)
     particles.set_acc(acc_new)
-
-    # Now return the updated particles, the acceleration, jerk (can be None), and potential (can be None)
-    return particles, tstep,acc_new,jerk_new,potential_new
-
-
-
-
+    # print(f"new potential is {pot_new}\n")
+    # Return the updated particles, acceleration, jerk, and potential
+    return particles, tstep, acc_new, jerk, pot_new

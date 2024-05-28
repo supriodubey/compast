@@ -4,6 +4,7 @@ setup.py
 fireworks/__init__.py
 fireworks/assignment3_pointC.py
 fireworks/assignment3_pointC_adaptive.py
+fireworks/assignment3_pointD_timestep.py
 fireworks/ic.py
 fireworks/particles.py
 fireworks/version.py
