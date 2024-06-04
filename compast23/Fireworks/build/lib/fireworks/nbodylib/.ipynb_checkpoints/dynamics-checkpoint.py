@@ -31,11 +31,12 @@ The function needs to return a tuple containing three elements:
 from typing import Optional, Tuple
 import numpy as np
 import numpy.typing as npt
-from ..particles import Particles,Particles_tf
+from ..particles import Particles,Particles_tf#,Particles_Numba
 import tensorflow as tf
-from tqdm import tqdm
 tf.config.optimizer.set_jit(True)
-from numba import prange, njit
+from tqdm import tqdm
+
+# from numba import prange, njit
 
 try:
     import pyfalcon
@@ -44,7 +45,7 @@ except:
     pyfalcon_load=False
 
 def acceleration_estimate_template(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
+        -> Tuple[npt.NDArray[np.float32],Optional[npt.NDArray[np.float32]],Optional[npt.NDArray[np.float32]]]:
     """
     This an empty functions that can be used as a basic template for
     implementing the other functions to estimate the gravitational acceleration.
@@ -81,7 +82,7 @@ def acceleration_estimate_template(particles: Particles, softening: float =0.) \
     return (acc,jerk,pot)
 
 def acceleration_jerk_direct(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
+        -> Tuple[npt.NDArray[np.float32],Optional[npt.NDArray[np.float32]],Optional[npt.NDArray[np.float32]]]:
     """
     :param particles: An instance of the class Particles
     :param softening: Softening parameter
@@ -136,7 +137,7 @@ def acceleration_jerk_direct(particles: Particles, softening: float =0.) \
     return (acc,jerk,pot)
 
 def acceleration_direct(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
+        -> Tuple[npt.NDArray[np.float32],Optional[npt.NDArray[np.float32]],Optional[npt.NDArray[np.float32]]]:
     """
     :param particles: An instance of the class Particles
     :param softening: Softening parameter
@@ -170,12 +171,13 @@ def acceleration_direct(particles: Particles, softening: float =0.) \
 
     acc  = acc
     jerk = None
-    pot = None
+    #pot = None
+    pot = particles.Epot(softening = softening)
 
     return (acc,jerk,pot)
 
 def acceleration_direct_vectorized(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
+        -> Tuple[npt.NDArray[np.float32],Optional[npt.NDArray[np.float32]],Optional[npt.NDArray[np.float32]]]:
     """
     :param particles: An instance of the class Particles
     :param softening: Softening parameter
@@ -204,13 +206,15 @@ def acceleration_direct_vectorized(particles: Particles, softening: float =0.) \
 
     acc  = np.array(list(acc))
     jerk = None
-    pot = None
+    #pot = None
+    pot = particles.Epot(softening = softening)
+
 
     return (acc,jerk,pot)
 
 
 def acceleration_pyfalcon(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
+        -> Tuple[npt.NDArray[np.float32],Optional[npt.NDArray[np.float32]],Optional[npt.NDArray[np.float32]]]:
     """
     Estimate the acceleration following the fast-multipole gravity Dehnen2002 solver (https://arxiv.org/pdf/astro-ph/0202512.pdf)
     as implementd in pyfalcon (https://github.com/GalacticDynamics-Oxford/pyfalcon)
@@ -230,19 +234,24 @@ def acceleration_pyfalcon(particles: Particles, softening: float =0.) \
     jerk = None
 
     return acc, jerk, pot
+
+
+##############################################################################################################
 ###################################### TensorFlow ############################################################
-def acceleration_tf(particles: Particles_tf, softening: float = 0.) \
+
+def acceleration_tf(particles: Particles_tf, softening: float = 0., potential: bool = False) \
         -> Tuple[tf.Tensor, Optional[tf.Tensor], Optional[tf.Tensor]]:
     """
     Estimate the acceleration using TensorFlow operations.
 
     :param particles: An instance of the class Particles_tf
     :param softening: Softening parameter
+    :param potential: Whether to compute and return the potential
     :return: A tuple with 3 elements:
 
         - acc, a Nx3 TensorFlow tensor containing the acceleration for each particle
         - jerk, None, the jerk is not estimated
-        - pot, None, the potential is not estimated
+        - pot, a TensorFlow tensor containing the potential for each particle if potential=True, otherwise None
     """
     pos = particles.pos
     mass = particles.mass
@@ -250,14 +259,13 @@ def acceleration_tf(particles: Particles_tf, softening: float = 0.) \
     x = pos[:, 0:1]
     y = pos[:, 1:2]
     z = pos[:, 2:3]
-    # print(f'datatpye inside acc_tf is {type(x)}')
+    
     dx = tf.transpose(x) - x
     dy = tf.transpose(y) - y
     dz = tf.transpose(z) - z
 
     r_squared = dx ** 2 + dy ** 2 + dz ** 2
-    # Avoid division by zero by adding a small epsilon value
-    epsilon = tf.constant(1e-10, dtype=tf.float64)
+    epsilon = tf.constant(1e-10, dtype=tf.float32)
     r_inv_cube = tf.math.rsqrt(r_squared + epsilon) ** 3
 
     acc_x = tf.reduce_sum(dx * r_inv_cube * mass, axis=1)
@@ -266,166 +274,9 @@ def acceleration_tf(particles: Particles_tf, softening: float = 0.) \
     acc = tf.stack([acc_x, acc_y, acc_z], axis=1)
 
     jerk = None
-    pot = None
+    pot = particles.Epot_tf(softening=softening) if potential else None
+    # print(f"potential inside dynamics  is {pot}")
 
-    return acc, jerk, pot
-
-from tqdm import tqdm
-
-def acceleration_tf_batch(particles: Particles_tf, batch_size: int, softening: float = 0.) \
-        -> Tuple[tf.Tensor, Optional[tf.Tensor], Optional[tf.Tensor]]:
-    pos = particles.pos
-    mass = particles.mass
-    num_particles = tf.shape(pos)[0]
-    num_batches = tf.cast(tf.math.ceil(num_particles / batch_size), tf.int64)
-
-    acc_list = []
-    for i in tqdm(range(num_batches), desc="Processing batches"):
-        start = i * batch_size
-        end = tf.minimum((i + 1) * batch_size, num_particles)
-
-        pos_batch = pos[start:end]
-        mass_batch = mass[start:end]
-
-        dx = tf.transpose(pos_batch[:, 0:1]) - pos_batch[:, 0:1]
-        dy = tf.transpose(pos_batch[:, 1:2]) - pos_batch[:, 1:2]
-        dz = tf.transpose(pos_batch[:, 2:3]) - pos_batch[:, 2:3]
-
-        r_squared = dx ** 2 + dy ** 2 + dz ** 2
-        epsilon = tf.constant(1e-10, dtype=tf.float64)
-        r_inv_cube = tf.math.rsqrt(r_squared + epsilon) ** 3
-
-        acc_x = tf.reduce_sum(dx * r_inv_cube * mass_batch, axis=1)
-        acc_y = tf.reduce_sum(dy * r_inv_cube * mass_batch, axis=1)
-        acc_z = tf.reduce_sum(dz * r_inv_cube * mass_batch, axis=1)
-        acc = tf.stack([acc_x, acc_y, acc_z], axis=1)
-        acc_list.append(acc)
-
-    acc = tf.concat(acc_list, axis=0)
-
-    jerk = None
-    pot = None
-
-    return acc, jerk, pot
-
-##################################### NUMBA JIT ##################################################################
-@njit
-def acceleration_direct_njit(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
-    """
-    :param particles: An instance of the class Particles
-    :param softening: Softening parameter
-    :return: A tuple with 3 elements:
-
-        - acc, Nx3 numpy array storing the acceleration for each particle
-        - jerk, Nx3 numpy array storing the time derivative of the acceleration, can be set to None
-        - pot, Nx1 numpy array storing the potential at each particle position, can be set to None
-    """
-    pos = particles.pos
-    mass = particles.mass
-    N = len(particles)
-
-    acc = np.zeros_like(pos)
-
-    for i in range(N):
-        for j in range(i+1,N):
-            #distances between particles i and j
-            dx = pos[i,0]-pos[j,0]
-            dy = pos[i,1]-pos[j,1]
-            dz = pos[i,2]-pos[j,2]
-            r = np.sqrt(dx**2 + dy**2 + dz**2)
-            
-            acc_ij = np.zeros(3)
-            acc_ij[0] = dx / (r ** 3 + softening ** 3)
-            acc_ij[1] = dy / (r ** 3 + softening ** 3)
-            acc_ij[2] = dz / (r ** 3 + softening ** 3)
-
-            #add accelleration to bodies
-            for k in range(3):
-                acc[i,k] -= acc_ij[k]*mass[j]
-                acc[j,k] += acc_ij[k]*mass[i]
-
-    acc  = acc
-    jerk = None
-    pot = None
-
-    return (acc,jerk,pot)
+    return acc, jerk, pot if potential else None
 
 
-@njit(parallel=True)
-def acceleration_direct_njit_parallel(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
-    """
-    :param particles: An instance of the class Particles
-    :param softening: Softening parameter
-    :return: A tuple with 3 elements:
-
-        - acc, Nx3 numpy array storing the acceleration for each particle
-        - jerk, Nx3 numpy array storing the time derivative of the acceleration, can be set to None
-        - pot, Nx1 numpy array storing the potential at each particle position, can be set to None
-    """
-    pos = particles.pos
-    mass = particles.mass
-    N = len(particles)
-
-    acc = np.zeros_like(pos)
-
-    for i in prange(N):
-        for j in range(i+1,N):
-            #distances between particles i and j
-            dx = pos[i,0]-pos[j,0]
-            dy = pos[i,1]-pos[j,1]
-            dz = pos[i,2]-pos[j,2]
-            r = np.sqrt(dx**2 + dy**2 + dz**2)
-            
-            acc_ij = np.zeros(3)
-            acc_ij[0] = dx / (r ** 3 + softening ** 3)
-            acc_ij[1] = dy / (r ** 3 + softening ** 3)
-            acc_ij[2] = dz / (r ** 3 + softening ** 3)
-
-            #add accelleration to bodies
-            for k in range(3):
-                acc[i,k] -= acc_ij[k]*mass[j]
-                acc[j,k] += acc_ij[k]*mass[i]
-
-    acc  = acc
-    jerk = None
-    pot = None
-
-    return (acc,jerk,pot)
-
-@njit
-def acceleration_direct_vectorized_njit(particles: Particles, softening: float =0.) \
-        -> Tuple[npt.NDArray[np.float64],Optional[npt.NDArray[np.float64]],Optional[npt.NDArray[np.float64]]]:
-    """
-    :param particles: An instance of the class Particles
-    :param softening: Softening parameter
-    :return: A tuple with 3 elements:
-
-        - acc, Nx3 numpy array storing the acceleration for each particle
-        - jerk, Nx3 numpy array storing the time derivative of the acceleration, can be set to None
-        - pot, Nx1 numpy array storing the potential at each particle position, can be set to None
-    """
-    pos = particles.pos
-    mass = particles.mass
-
-    x = pos[:,0:1]
-    y = pos[:,1:2]
-    z = pos[:,2:3]
-
-    dx = x.copy().T-x
-    dy = y.copy().T-y
-    dz = z.copy().T-z
-
-    r = np.sqrt(dx**2+dy**2+dz**2)
-
-    acc_x = np.sum(np.nan_to_num(dx * mass / (r ** 3 + softening ** 3)), axis=1)
-    acc_y = np.sum(np.nan_to_num(dy * mass / (r ** 3 + softening ** 3)), axis=1)
-    acc_z = np.sum(np.nan_to_num(dz * mass / (r ** 3 + softening ** 3)), axis=1)
-    acc = zip(acc_x,acc_y,acc_z)
-
-    acc  = np.array(list(acc))
-    jerk = None
-    pot = None
-
-    return (acc,jerk,pot)
