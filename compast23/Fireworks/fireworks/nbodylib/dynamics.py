@@ -33,7 +33,7 @@ import numpy as np
 import numpy.typing as npt
 from ..particles import Particles,Particles_tf#,Particles_Numba
 import tensorflow as tf
-tf.config.optimizer.set_jit(True)
+# tf.config.optimizer.set_jit(True)
 from tqdm import tqdm
 import gc
 # from numba import prange, njit
@@ -171,8 +171,8 @@ nor
 
     acc  = acc
     jerk = None
-    pot = None
-    # pot = particles.Epot(softening = softening)
+    # pot = None
+    pot = particles.Epot(softening = softening)
     # pot = particles.Epot_vec(softening = softening)
     
 
@@ -229,8 +229,8 @@ def acceleration_direct_vectorized(particles: Particles, softening: float =0.) \
 
     acc  = np.array(list(acc))
     jerk = None
-    pot = None
-    # pot = particles.Epot(softening = softening)
+    # pot = None
+    pot = particles.Epot(softening = softening)
     # pot = particles.Epot_vec(softening = softening)
 
     return (acc,jerk,pot)
@@ -288,7 +288,7 @@ def acceleration_tf(particles: Particles_tf, softening: float = 0., potential: b
     dz = tf.transpose(z) - z
 
     r_squared = dx ** 2 + dy ** 2 + dz ** 2
-    epsilon = tf.constant(softening, dtype=tf.float32)
+    epsilon = tf.constant(1e-10, dtype=tf.float32)
     r_inv_cube = tf.math.rsqrt(r_squared + epsilon) ** 3
 
     acc_x = tf.reduce_sum(dx * r_inv_cube * mass, axis=1)
@@ -302,50 +302,4 @@ def acceleration_tf(particles: Particles_tf, softening: float = 0., potential: b
 
     return acc, jerk, pot if potential else None
 
-def acceleration_direct_tf(particles: Particles_tf, softening: float = 0., potential: bool = False) \
-        -> Tuple[tf.Tensor, Optional[tf.Tensor], Optional[tf.Tensor]]:
-    
-    pos = particles.pos
-    mass = particles.mass
-    N = tf.shape(pos)[0]
-    acc = tf.zeros((N, 3), dtype=tf.float32)
-    
-    # Create a meshgrid of indices
-    i_indices, j_indices = tf.meshgrid(tf.range(N), tf.range(N), indexing='ij')
-
-    # Filter out the upper triangle and diagonal (i < j)
-    mask = tf.cast(i_indices < j_indices, dtype=tf.bool)
-    
-    i_indices = tf.boolean_mask(i_indices, mask)
-    j_indices = tf.boolean_mask(j_indices, mask)
-
-    # Get the positions for the pairs (i, j)
-    pos_i = tf.gather(pos, i_indices)
-    pos_j = tf.gather(pos, j_indices)
-
-    # Compute distances
-    dx = pos_i[:, 0] - pos_j[:, 0]
-    dy = pos_i[:, 1] - pos_j[:, 1]
-    dz = pos_i[:, 2] - pos_j[:, 2]
-    r = tf.sqrt(dx**2 + dy**2 + dz**2)
-
-    # Compute accelerations
-    r3_soft = r ** 3 + softening ** 3
-    acc_ij = tf.stack([dx / r3_soft, dy / r3_soft, dz / r3_soft], axis=1)
-
-    # Get masses for the pairs (i, j)
-    mass_i = tf.gather(mass, i_indices)
-    mass_j = tf.gather(mass, j_indices)
-
-    # Compute contributions to acceleration
-    acc_contrib_i = -acc_ij * tf.expand_dims(mass_j, axis=1)
-    acc_contrib_j = acc_ij * tf.expand_dims(mass_i, axis=1)
-
-    # Scatter updates to acceleration tensor
-    acc = tf.tensor_scatter_nd_add(acc, tf.expand_dims(i_indices, axis=1), acc_contrib_i)
-    acc = tf.tensor_scatter_nd_add(acc, tf.expand_dims(j_indices, axis=1), acc_contrib_j)
-    jerk = None
-    pot = particles.Epot_tf(softening=softening) if potential else None
-    
-    return acc,jerk, pot if potential else None
 
